@@ -1,0 +1,40 @@
+name: Netsuite Deployment
+run-name: ${{ github.actor }} is running the Netsuite Deployment
+on: [push]
+jobs:
+  netsuite-deploy:
+    runs-on: ubuntu-latest
+    environment: netsuite-demo
+    steps:
+      - name: Check out repository code into runtime
+        uses: actions/checkout@v5
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+      - name: Install Java JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'oracle'
+      - name: Install SuiteCloud CLI
+        run: npm install -g @oracle/suitecloud-cli --acceptsuitecloudsdklicense
+      - name: Create Private Key File and Setup SuiteCloud environment variables
+        run: | 
+          echo "${{secrets.PRIVATE_KEY}}" > /tmp/private_key.pem
+          chmod 600 /tmp/private_key.pem
+      - name: Setup Netsuite Credentials
+        env:
+          SUITECLOUD_CI: 1
+          SUITECLOUD_CI_PASSKEY: ${{secrets.PASSKEY}}
+        run: suitecloud account:setup:ci --authid main_auth_id --certificateid ${{secrets.CERTIFICATE_ID}} --privatekeypath /tmp/private_key.pem --account ${{secrets.ACCOUNT_ID}}
+      - name: Validate Project
+        env:
+          SUITECLOUD_CI: 1
+          SUITECLOUD_CI_PASSKEY: ${{secrets.PASSKEY}}
+        run: suitecloud project:validate
+      - name: Deploy Project
+        env:
+          SUITECLOUD_CI: 1
+          SUITECLOUD_CI_PASSKEY: ${{secrets.PASSKEY}}
+        run: suitecloud project:deploy
