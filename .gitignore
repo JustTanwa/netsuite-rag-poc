@@ -38,3 +38,6 @@ Thumbs.db
 
 # Project config
 project.json
+
+# ignore keys
+*.pem
