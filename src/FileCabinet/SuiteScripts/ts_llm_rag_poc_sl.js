@@ -80,6 +80,16 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       label: 'Data Source (file must be .txt)',
     });
 
+    const actionField = form.addField({
+      id: 'action',
+      type: serverWidget.FieldType.TEXT,
+      label: 'ingest',
+    });
+    actionField.defaultValue = 'ingest';
+    actionField.updateDisplayType({
+      displayType: serverWidget.FieldDisplayType.HIDDEN
+    });
+
     form.addSubmitButton({ label: 'Submit' });
 
     context.response.writePage(form);
@@ -129,7 +139,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
    */
   function handleFileIngest(context) {
     try {
-      let file = context.request.files[0];
+      let file = context.request.files['custpage_rag_data_source_file'];
       if (!file) {
         context.response.write(
           JSON.stringify({
