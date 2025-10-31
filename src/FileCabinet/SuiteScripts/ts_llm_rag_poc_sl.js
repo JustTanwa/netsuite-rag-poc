@@ -163,7 +163,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       }
 
       // Chunking files before embedding
-      const chunks = simpleTextChunking(fileContent, 500);
+      const chunks = simpleTextChunking(fileContent);
 
       if (!chunks.length) {
         return context.response.write(
@@ -232,11 +232,11 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
    *
    * Considering ending without cutting off words
    *
-   * llm.embed has limit of 512 token so we will use chunksize around 400 just in case
+   * llm.embed has limit of 512 token, 
    */
-  function simpleTextChunking(text, chunkSize = 400, overlap = 40) {
-    chunkSize = chunkSize > 400 ? 400 : chunkSize;
-    overlap = overlap > 40 ? 40 : overlap;
+  function simpleTextChunking(text, chunkSize = 1500, overlap = 300) {
+    chunkSize = chunkSize > 1500 ? 1500 : chunkSize;
+    overlap = overlap > 300 ? 300 : overlap;
     if (overlap > chunkSize * 0.2) {
       log.error('simpleTextChunking', 'overlap cannot be larger than 20% of chunk size.');
       return [];
@@ -283,7 +283,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 
     try {
       // Step 1: Generate embedding for the user query
-      let queryEmbedding = generateEmbedding([query]);
+      let queryEmbedding = generateEmbedding([query])[0];
 
       if (!queryEmbedding) {
         log.error('retrieveRelevantContext - Embedding Error', 'Failed to generate query embedding');
@@ -300,7 +300,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
         try {
           let storedEmbedding = JSON.parse(kbRecord.embedding);
           let similarity = cosineSimilarity(queryEmbedding, storedEmbedding);
-
+          log.debug("similarity", similarity)
           similarities.push({
             id: kbRecord.id,
             content: kbRecord.content,
