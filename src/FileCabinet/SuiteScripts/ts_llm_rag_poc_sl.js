@@ -48,7 +48,19 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       if (isIngestion) {
         handleFileIngest(context);
       } else {
-        handleChatRequest(context);
+        switch(context.request.parameters.step) {
+          case 'retrieve':
+            handleRetrieveStep(context);
+            break;
+          case 'augment':
+            handleAugmentStep(context);
+            break;
+          case 'generate':
+            handleGenerateStep(context);
+            break;
+          default:
+            handleChatRequest(context);
+        }
       }
     }
     log.audit('onRequest remaining usage:', {
@@ -321,7 +333,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 
       // Step 5: Filter results with similarity > 0.7 (threshold for relevance)
       topResults.forEach(function (result) {
-        if (result.similarity > 0.7) {
+        if (result.similarity > 0.3) {
           contexts.push({
             type: 'knowledge_base',
             id: result.id,
@@ -448,9 +460,14 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       messages.push(
         llm.createChatMessage({
           role: llm.ChatRole.CHATBOT,
-          text:
-            'You are a helpful NetSuite assistant. Answer questions based on the provided NetSuite data. If no relevant data is provided, give general guidance. Context:\n' +
-            contextStr,
+          text: 'You are a helpful NetSuite assistant. Answer questions based on the provided NetSuite data.\n\n' +
+             'IMPORTANT: Format your responses for readability:\n' +
+             '- Use short paragraphs (2-3 sentences max)\n' +
+             '- Add blank lines between paragraphs\n' +
+             '- Use bullet points for lists\n' +
+             '- Use numbered lists for steps\n' +
+             '- Keep responses concise and well-structured\n\n' +
+             'Context:\n' + contextStr
         })
       );
 
@@ -474,7 +491,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
         prompt: userMessage,
         chatHistory: messages,
         modelParameters: {
-          maxTokens: 1000, // Can play around with this for different response size
+          maxTokens: 500, // Can play around with this for different response size
           temperature: 0.4, // Can play with this for more "creative" response
         },
       });
@@ -534,7 +551,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 
         /* Chat Area */
         #chatMessages {
-            height: 400px;
+            height: 600px;
             overflow-y: auto;
             border: 1px solid #ddd;
             padding: 10px;
@@ -634,6 +651,12 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             color: #2196F3;
         }
 
+        .context-item pre {
+            white-space: pre-wrap;
+            word-break: break-word; 
+            overflow-wrap: break-word;
+        }
+
         /* Stats */
         .stats {
             display: grid;
@@ -678,6 +701,42 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             background: #f0f0f0;
             border-left: 3px solid #2196F3;
         }
+
+        /* Thinking Bubble Animation */
+        .thinking-bubble {
+            display: none;
+            margin: 10px 0;
+            padding: 15px;
+            background: #e3f2fd;
+            position: relative;
+        }
+
+        .thinking-bubble.active {
+            display: block;
+        }
+
+        .thinking-dots {
+            display: flex;
+            gap: 4px;
+            padding: 3px;
+        }
+
+        .thinking-dots span {
+            width: 8px;
+            height: 8px;
+            background: #2196F3;
+            border-radius: 50%;
+            animation: thinking 1.4s infinite;
+            opacity: 0.5;
+        }
+
+        .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes thinking {
+            0%, 100% { opacity: 0.5; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
     </style>
 </head>
 <body>
@@ -695,7 +754,14 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
                 <div id="chatMessages">
                     <div class="message message-bot">
                         <div class="message-label">Assistant</div>
-                        <div>Hello! I'm your NetSuite RAG assistant powered by OCI Cohere. Ask me about customers, orders, or inventory.</div>
+                        <div>Hello! I'm your NetSuite RAG assistant powered by OCI Cohere. Ask me about your integration documentations.</div>
+                    </div>
+                </div>
+                <div class="thinking-bubble" id="thinkingBubble">
+                    <div class="thinking-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
                     </div>
                 </div>
                 <div class="input-group">
@@ -717,7 +783,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
                         <li id="step1">1. Receive Query</li>
                         <li id="step2">2. Retrieve Context</li>
                         <li id="step3">3. Augment Prompt</li>
-                        <li id="step4">4. Generate Response</li>
+                        <li id="step4">4. Generating Response</li>
                     </ol>
                 </div>
 
@@ -748,6 +814,22 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
     <script>
         let conversationHistory = [];
         let messageCount = 0;
+        let currentContext = null;
+        let currentAugmentedPrompt = null;
+
+        async function executeStep(step, data) {
+            const endpoint = window.location.href + '&step=' + step;
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return await response.json();
+            } catch (error) {
+                throw new Error('Step ' + step + ' failed: ' + error);
+            }
+        }
 
         async function sendMessage() {
             const input = document.getElementById('userInput');
@@ -755,55 +837,65 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             
             if (!message) return;
 
-            // Disable input
+            // Disable UI
             input.disabled = true;
             document.getElementById('sendBtn').disabled = true;
-
-            // Add user message
-            addMessage(message, 'user');
-            input.value = '';
-
-            // Show loading
             document.getElementById('loading').classList.add('active');
 
-            // Animate steps
-            animateSteps();
-
             try {
-                const response = await fetch(window.location.href, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        message: message,
-                        history: conversationHistory
-                    })
+                // Show thinking bubble during LLM generation
+                document.getElementById('thinkingBubble').classList.add('active');
+                
+                // Step 1: Query received
+                addMessage(message, 'user');
+                document.getElementById('step1').classList.add('active');
+                // Step 2: Retrieval
+                const retrieveResult = await executeStep('retrieve', { message });
+                document.getElementById('step2').classList.add('active');
+                if (!retrieveResult.success) throw new Error(retrieveResult.error);
+                currentContext = retrieveResult.context;
+                updateContext(currentContext);
+
+                // Step 3: Augmenting
+                const augmentResult = await executeStep('augment', { 
+                    message,
+                    context: currentContext 
                 });
+                if (!augmentResult.success) throw new Error(augmentResult.error);
+                document.getElementById('step3').classList.add('active');
+                currentAugmentedPrompt = augmentResult.augmentedPrompt;
 
-                const data = await response.json();
+                // Step 4: Generation
+                document.getElementById('step4').classList.add('active');
+                const generateResult = await executeStep('generate', {
+                    message,
+                    context: currentContext,
+                    augmentedPrompt: currentAugmentedPrompt,
+                    history: conversationHistory
+                });
+                if (!generateResult.success) throw new Error(generateResult.error);
 
-                if (data.success) {
-                    addMessage(data.message, 'bot');
-                    updateContext(data.context);
-                    
-                    conversationHistory.push(
-                        { role: 'USER', text: message },
-                        { role: 'CHATBOT', text: data.message }
-                    );
-                } else {
-                    addMessage('Error: ' + data.error, 'bot');
-                }
+                // Update UI with results
+                addMessage(generateResult.response.text, 'bot');
+                
+                // Update conversation history
+                conversationHistory.push(
+                    { role: 'USER', text: message },
+                    { role: 'CHATBOT', text: generateResult.response.text }
+                );
+
             } catch (error) {
-                addMessage('Connection error: ' + error.toString(), 'bot');
+                addMessage('Error: ' + error.toString(), 'bot');
+            } finally {
+                // Hide thinking bubble
+                document.getElementById('thinkingBubble').classList.remove('active');
+                document.getElementById('loading').classList.remove('active');
+                resetSteps();
+                input.disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                input.value = '';
+                input.focus();
             }
-
-            // Hide loading and reset
-            document.getElementById('loading').classList.remove('active');
-            resetSteps();
-            input.disabled = false;
-            document.getElementById('sendBtn').disabled = false;
-            input.focus();
         }
 
         function addMessage(content, type) {
@@ -816,7 +908,21 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             label.textContent = type === 'user' ? 'You' : 'Assistant';
             
             const contentDiv = document.createElement('div');
-            contentDiv.textContent = content;
+
+            if (type !== 'user') {
+                // Convert double newlines to paragraphs, single newlines to <br>
+                var formatted = content
+                    .split('\\n\\n')
+                    .map(function(para) {
+                        return '<p style="margin-bottom: 12px;">' + 
+                              para.replace(/\\n/g, '<br>') + 
+                              '</p>';
+                    })
+                    .join('');
+                contentDiv.innerHTML = formatted;
+            } else {
+                contentDiv.textContent = content;
+            }
             
             messageDiv.appendChild(label);
             messageDiv.appendChild(contentDiv);
@@ -848,15 +954,6 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             document.getElementById('contextCount').textContent = contexts.length;
         }
 
-        function animateSteps() {
-            const steps = ['step1', 'step2', 'step3', 'step4'];
-            steps.forEach((step, index) => {
-                setTimeout(() => {
-                    document.getElementById(step).classList.add('active');
-                }, index * 400);
-            });
-        }
-
         function resetSteps() {
             const steps = ['step1', 'step2', 'step3', 'step4'];
             steps.forEach(step => {
@@ -867,6 +964,76 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 </body>
 </html>
         `;
+  }
+
+  /**
+   * Handle retrieve step requests (POST). Function will perform retrieval of relevant context
+   */
+  function handleRetrieveStep(context) {
+    try {
+        let params = JSON.parse(context.request.body);
+        let userMessage = params.message;
+        
+        let relevantContext = retrieveRelevantContext(userMessage);
+        
+        context.response.write(JSON.stringify({
+            success: true,
+            step: 'retrieve',
+            context: relevantContext
+        }));
+    } catch (e) {
+        log.error('handleRetrieveStep', e);
+        context.response.write(JSON.stringify({
+            success: false,
+            step: 'retrieve',
+            error: e.toString()
+        }));
+    }
+  }
+
+  /**
+   * Handle augment step requests (POST). Planceholder function for the animation of the step
+   */
+  function handleAugmentStep(context) {
+    try {
+        // Augmenting is just creating a new prompt from context, so that is done already with the generateLLMResponse        
+        context.response.write(JSON.stringify({
+            success: true,
+            step: 'augment'
+        }));
+    } catch (e) {
+        log.error('handleAugmentStep', e);
+        context.response.write(JSON.stringify({
+            success: false,
+            step: 'augment',
+            error: e.toString()
+        }));
+    }
+  }
+
+  /**
+   * Handle generate step requests (POST). Function will generate response using augmented prompt
+   */
+  function handleGenerateStep(context) {
+    try {
+        let params = JSON.parse(context.request.body);
+        let history = (params.history || []).map((history) => llm.createChatMessage(history));
+        
+        let response = generateLLMResponse(params.message, params.context, history);
+        
+        context.response.write(JSON.stringify({
+            success: true,
+            step: 'generate',
+            response: response
+        }));
+    } catch (e) {
+        log.error('handleGenerateStep', e);
+        context.response.write(JSON.stringify({
+            success: false,
+            step: 'generate',
+            error: e.toString()
+        }));
+    }
   }
 
   return {
