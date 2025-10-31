@@ -1,4 +1,9 @@
 <manifest projecttype="ACCOUNTCUSTOMIZATION">
   <projectname>netsuite-rag-poc</projectname>
   <frameworkversion>1.0</frameworkversion>
+  <dependencies>
+    <features>
+      <feature required="true">CUSTOMRECORDS</feature>
+    </features>
+  </dependencies>
 </manifest>
