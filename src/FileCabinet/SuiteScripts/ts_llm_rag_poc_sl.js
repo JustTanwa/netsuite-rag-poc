@@ -36,6 +36,116 @@
  */
 
 define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], function (serverWidget, llm, query, runtime, record) {
+
+  /**
+   * AI Generated based on https://github.com/langchain-ai/langchainjs/blob/main/libs/langchain-textsplitters/src/text_splitter.ts
+   * Function for splitting text or chunking
+   */
+  class RecursiveCharacterTextSplitter {
+    constructor(config = {}) {
+      this.separators = config.separators || ['\n\n', '\n', ' ', ''];
+      this.chunkSize = config.chunkSize || 1500;
+      this.chunkOverlap = config.chunkOverlap || 200;
+      this.lengthFunction = config.lengthFunction || ((text) => text.length);
+    }
+
+    splitText(text) {
+      const finalChunks = [];
+      if (!text || this.lengthFunction(text) === 0) {
+        return [];
+      }
+
+      let splits = this._splitTextWithSeparator(text, this.separators[0]);
+
+      let goodSplits = [];
+      let separator = this.separators[0];
+
+      for (let i = 0; i < this.separators.length; i++) {
+        if (splits.length === 1) {
+          separator = this.separators[i];
+          splits = this._splitTextWithSeparator(text, separator);
+        } else {
+          break;
+        }
+      }
+
+      // Merge small chunks
+      let currentChunk = '';
+
+      for (const split of splits) {
+        if (this.lengthFunction(currentChunk) + this.lengthFunction(split) + this.lengthFunction(separator) <= this.chunkSize) {
+          if (currentChunk) {
+            currentChunk += separator;
+          }
+          currentChunk += split;
+        } else {
+          if (currentChunk) {
+            goodSplits.push(currentChunk);
+          }
+          currentChunk = split;
+        }
+      }
+      if (currentChunk) {
+        goodSplits.push(currentChunk);
+      }
+
+      // Handle overlap
+      if (goodSplits.length === 1) {
+        return goodSplits;
+      }
+
+      for (let i = 0; i < goodSplits.length; i++) {
+        let chunk = goodSplits[i];
+
+        if (i > 0) {
+          const prevChunk = goodSplits[i - 1];
+          const overlap = this._getOverlap(prevChunk, chunk);
+          if (overlap) {
+            chunk = overlap + chunk;
+          }
+        }
+
+        finalChunks.push(chunk);
+      }
+
+      return finalChunks;
+    }
+
+    /**
+     * Split text on a separator
+     */
+    _splitTextWithSeparator(text, separator) {
+      if (!separator) {
+        return [text];
+      }
+      return text.split(separator).filter((x) => x.length > 0);
+    }
+
+    /**
+     * Get overlap between the end of first chunk and start of second chunk
+     */
+    _getOverlap(chunk1, chunk2) {
+      if (!this.chunkOverlap) {
+        return '';
+      }
+
+      const start = Math.max(0, chunk1.length - this.chunkOverlap);
+      const overlap = chunk1.slice(start);
+
+      if (!chunk2.startsWith(overlap)) {
+        const minOverlap = Math.min(this.chunkOverlap, overlap.length);
+        for (let i = 0; i < minOverlap; i++) {
+          const potentialOverlap = overlap.slice(i);
+          if (chunk2.startsWith(potentialOverlap)) {
+            return potentialOverlap;
+          }
+        }
+      }
+
+      return '';
+    }
+  }
+
   function onRequest(context) {
     const isIngestion = context.request.parameters.action === 'ingest';
     if (context.request.method === 'GET') {
@@ -48,7 +158,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       if (isIngestion) {
         handleFileIngest(context);
       } else {
-        switch(context.request.parameters.step) {
+        switch (context.request.parameters.step) {
           case 'retrieve':
             handleRetrieveStep(context);
             break;
@@ -92,6 +202,18 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       label: 'Data Source (file must be .txt)',
     });
 
+    form.addField({
+      id: 'custpage_rag_chunk_size',
+      type: serverWidget.FieldType.INTEGER,
+      label: 'Chunk Size',
+    }).defaultValue = 800;
+
+    form.addField({
+      id: 'custpage_rag_chunk_overlap',
+      type: serverWidget.FieldType.INTEGER,
+      label: 'Chunk Overlap Size',
+    }).defaultValue = 80;
+
     const actionField = form.addField({
       id: 'action',
       type: serverWidget.FieldType.TEXT,
@@ -99,7 +221,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
     });
     actionField.defaultValue = 'ingest';
     actionField.updateDisplayType({
-      displayType: serverWidget.FieldDisplayType.HIDDEN
+      displayType: serverWidget.FieldDisplayType.HIDDEN,
     });
 
     form.addSubmitButton({ label: 'Submit' });
@@ -152,6 +274,8 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
   function handleFileIngest(context) {
     try {
       let file = context.request.files['custpage_rag_data_source_file'];
+      let chunkSize = parseInt(context.request.custpage_rag_chunk_size || '800');
+      let chunkOverlap = parseInt(context.request.custpage_rag_chunk_overlap || '80');
       if (!file) {
         context.response.write(
           JSON.stringify({
@@ -174,8 +298,15 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
         return;
       }
 
-      // Chunking files before embedding
-      const chunks = simpleTextChunking(fileContent);
+      // Create text splitter instance - data source has been pre-formatted
+      const splitter = new RecursiveCharacterTextSplitter({
+        chunkSize: chunkSize,
+        chunkOverlap: chunkOverlap,
+        separators: ['\n\n', '\n', '.', ' ', ''],
+      });
+
+      // Split text into chunks
+      const chunks = splitter.splitText(fileContent);
 
       if (!chunks.length) {
         return context.response.write(
@@ -184,7 +315,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
             message: 'Unable to chunk the file',
             stats: {
               filename: file.name,
-              total_chunks: chunks.length,
+              total_chunks: 0,
               file_size: file.size,
             },
           })
@@ -239,51 +370,6 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
   }
 
   /**
-   * Chunk text into smaller pieces for embedding
-   * Uses simple fixed size chunking with overlap
-   *
-   * Considering ending without cutting off words
-   *
-   * llm.embed has limit of 512 token, 
-   */
-  function simpleTextChunking(text, chunkSize = 1500, overlap = 300) {
-    chunkSize = chunkSize > 1500 ? 1500 : chunkSize;
-    overlap = overlap > 300 ? 300 : overlap;
-    if (overlap > chunkSize * 0.2) {
-      log.error('simpleTextChunking', 'overlap cannot be larger than 20% of chunk size.');
-      return [];
-    }
-    let chunks = [];
-
-    if (!text || text.length === 0) {
-      return chunks;
-    }
-
-    let position = 0;
-
-    while (position < text.length) {
-      let end = position + chunkSize;
-      let chunk = text.slice(position, end);
-
-      // If not at the end, try to break at last space to avoid cutting words
-      if (end < text.length) {
-        let lastSpace = chunk.lastIndexOf(' ');
-        if (lastSpace > 0) {
-          chunk = chunk.slice(0, lastSpace);
-          end = position + lastSpace;
-        }
-      }
-
-      chunks.push(chunk.trim());
-
-      // Move position forward by (chunkSize - overlap)
-      position = end - overlap;
-    }
-
-    return chunks;
-  }
-
-  /**
    * Retrieve relevant context using vector similarity search
    * Assumes a custom record 'customrecord_knowledge_base' exists with fields:
    * - custrecord_kb_content (text): The actual content
@@ -312,7 +398,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
         try {
           let storedEmbedding = JSON.parse(kbRecord.embedding);
           let similarity = cosineSimilarity(queryEmbedding, storedEmbedding);
-          log.debug("similarity", similarity)
+          log.debug('similarity', similarity);
           similarities.push({
             id: kbRecord.id,
             content: kbRecord.content,
@@ -331,9 +417,9 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 
       let topResults = similarities.slice(0, 5);
 
-      // Step 5: Filter results with similarity > 0.7 (threshold for relevance)
+      // Step 5: Filter results with similarity over threshold for broad similarity
       topResults.forEach(function (result) {
-        if (result.similarity > 0.3) {
+        if (result.similarity > 0.6) {
           contexts.push({
             type: 'knowledge_base',
             id: result.id,
@@ -460,14 +546,17 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
       messages.push(
         llm.createChatMessage({
           role: llm.ChatRole.CHATBOT,
-          text: 'You are a helpful NetSuite assistant. Answer questions based on the provided NetSuite data.\n\n' +
-             'IMPORTANT: Format your responses for readability:\n' +
-             '- Use short paragraphs (2-3 sentences max)\n' +
-             '- Add blank lines between paragraphs\n' +
-             '- Use bullet points for lists\n' +
-             '- Use numbered lists for steps\n' +
-             '- Keep responses concise and well-structured\n\n' +
-             'Context:\n' + contextStr
+          text:
+            'You are a helpful NetSuite assistant. Answer questions based on the provided NetSuite data.\n\n' +
+            'IMPORTANT: Format your responses for readability:\n' +
+            '- Use short paragraphs (2-3 sentences max)\n' +
+            '- Add blank lines between paragraphs\n' +
+            '- Use bullet points for lists\n' +
+            '- Use numbered lists for steps\n' +
+            '- Keep responses concise and well-structured\n\n' +
+            '- Avoid using markdown format\n\n' +
+            //'Context:\n' +
+            contextStr,
         })
       );
 
@@ -490,6 +579,9 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
         modelFamily: llm.ModelFamily.COHERE_COMMAND_R_PLUS,
         prompt: userMessage,
         chatHistory: messages,
+        documents: [
+          ...context.map(ctx => llm.createDocument({id: ctx.type+ctx.id, data: ctx.content}))
+        ],
         modelParameters: {
           maxTokens: 500, // Can play around with this for different response size
           temperature: 0.4, // Can play with this for more "creative" response
@@ -632,7 +724,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
 
         /* Context Display */
         #contextDisplay {
-            max-height: 300px;
+            height: 280px;
             overflow-y: auto;
             font-size: 0.9em;
         }
@@ -848,6 +940,7 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
                 
                 // Step 1: Query received
                 addMessage(message, 'user');
+                input.value = '';
                 document.getElementById('step1').classList.add('active');
                 // Step 2: Retrieval
                 const retrieveResult = await executeStep('retrieve', { message });
@@ -893,7 +986,6 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
                 resetSteps();
                 input.disabled = false;
                 document.getElementById('sendBtn').disabled = false;
-                input.value = '';
                 input.focus();
             }
         }
@@ -971,23 +1063,27 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
    */
   function handleRetrieveStep(context) {
     try {
-        let params = JSON.parse(context.request.body);
-        let userMessage = params.message;
-        
-        let relevantContext = retrieveRelevantContext(userMessage);
-        
-        context.response.write(JSON.stringify({
-            success: true,
-            step: 'retrieve',
-            context: relevantContext
-        }));
+      let params = JSON.parse(context.request.body);
+      let userMessage = params.message;
+
+      let relevantContext = retrieveRelevantContext(userMessage);
+
+      context.response.write(
+        JSON.stringify({
+          success: true,
+          step: 'retrieve',
+          context: relevantContext,
+        })
+      );
     } catch (e) {
-        log.error('handleRetrieveStep', e);
-        context.response.write(JSON.stringify({
-            success: false,
-            step: 'retrieve',
-            error: e.toString()
-        }));
+      log.error('handleRetrieveStep', e);
+      context.response.write(
+        JSON.stringify({
+          success: false,
+          step: 'retrieve',
+          error: e.toString(),
+        })
+      );
     }
   }
 
@@ -996,18 +1092,22 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
    */
   function handleAugmentStep(context) {
     try {
-        // Augmenting is just creating a new prompt from context, so that is done already with the generateLLMResponse        
-        context.response.write(JSON.stringify({
-            success: true,
-            step: 'augment'
-        }));
+      // Augmenting is just creating a new prompt from context, so that is done already with the generateLLMResponse
+      context.response.write(
+        JSON.stringify({
+          success: true,
+          step: 'augment',
+        })
+      );
     } catch (e) {
-        log.error('handleAugmentStep', e);
-        context.response.write(JSON.stringify({
-            success: false,
-            step: 'augment',
-            error: e.toString()
-        }));
+      log.error('handleAugmentStep', e);
+      context.response.write(
+        JSON.stringify({
+          success: false,
+          step: 'augment',
+          error: e.toString(),
+        })
+      );
     }
   }
 
@@ -1016,23 +1116,27 @@ define(['N/ui/serverWidget', 'N/llm', 'N/query', 'N/runtime', 'N/record'], funct
    */
   function handleGenerateStep(context) {
     try {
-        let params = JSON.parse(context.request.body);
-        let history = (params.history || []).map((history) => llm.createChatMessage(history));
-        
-        let response = generateLLMResponse(params.message, params.context, history);
-        
-        context.response.write(JSON.stringify({
-            success: true,
-            step: 'generate',
-            response: response
-        }));
+      let params = JSON.parse(context.request.body);
+      let history = (params.history || []).map((history) => llm.createChatMessage(history));
+
+      let response = generateLLMResponse(params.message, params.context, history);
+
+      context.response.write(
+        JSON.stringify({
+          success: true,
+          step: 'generate',
+          response: response,
+        })
+      );
     } catch (e) {
-        log.error('handleGenerateStep', e);
-        context.response.write(JSON.stringify({
-            success: false,
-            step: 'generate',
-            error: e.toString()
-        }));
+      log.error('handleGenerateStep', e);
+      context.response.write(
+        JSON.stringify({
+          success: false,
+          step: 'generate',
+          error: e.toString(),
+        })
+      );
     }
   }
 
