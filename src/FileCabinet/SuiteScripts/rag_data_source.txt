@@ -1,51 +1,9 @@
-## NetSuite RAG Knowledge Base - Mock Data (v2)
+NetSuite to PayPal Integration. This integration syncs customer payment transactions between PayPal and NetSuite. Payment confirmations, transaction IDs, payer details, and refund events flow from PayPal into NetSuite. NetSuite sends order reference data to PayPal for payment matching and reconciliation. Settlement reports are periodically imported into NetSuite for accounting review. Responsible team members: Integration Owner is Finance Systems Team, Technical Lead is Marcus Chen and Support Contact is finance-it-support@example.com.
 
-### Document 1: ERP System Integration Details
+NetSuite to Stripe Integration. The NetSuite–Stripe integration processes online credit card payments and subscription billing information. Payment success or failure, invoice settlement details, and chargeback notifications flow from Stripe into NetSuite. Customer record validations, subscription metadata, and invoice references flow from NetSuite to Stripe. Settlement batch data from Stripe is imported into NetSuite for revenue recognition. Responsible team members: Integration Owner is Billing Operations Team, Technical Lead is Priya Kapoor and Support Contact is billing-integration@example.com.
 
-Title: Integration with External CRM (Salesforce)
-The primary integration point between NetSuite and our external CRM (Salesforce) is managed via the Celigo Integration App. This is a vital two-way sync, running every 15 minutes. Key data synchronization includes Customer Records (NetSuite Customer $\leftrightarrow$ Salesforce Account) and Sales Orders (NetSuite Sales Order $\leftarrow$ Salesforce Opportunity). The mapping for the "Customer Status" field uses a custom script to translate between NetSuite's five-tiered status system and Salesforce's three-stage status. Any failure in the sync process triggers an email alert to the integration_support@ourcompany.com group, and the error logs are stored in the Celigo dashboard under the 'ERP-CRM' flow. It is critical to note that historical data prior to 2024-01-01 was manually migrated and is *not* part of the automated sync. For manual reconciliation, refer to Saved Search ID 1452: 'CRM Sync Error Log'.
-* Integration Owner: Sarah Chen
-* Contact: sarah.chen@ourcompany.com or Extension 412.
+NetSuite to Shopify Integration. The NetSuite–Shopify connection synchronizes e-commerce data for orders, customers, and fulfillment status. Shopify sends order details, customer profiles, and product SKUs into NetSuite for fulfillment and inventory tracking. NetSuite sends inventory availability, shipping updates, cancellations, and refund data back to Shopify. Product catalog updates are synced bi-directionally depending on publishing rules. Responsible team members: Integration Owner is E-Commerce Operations, Technical Lead is Daniel Roberts and Support Contact is ecommerce-platforms@example.com.
 
-Title: Inventory and Warehouse Management System (WMS) Connection
-Our specialized WMS, 'WarehousePro 3.0', communicates with NetSuite using the SuiteTalk REST Web Services. This connection is used exclusively for inventory updates. Specifically, 'Item Fulfillment' records are pushed from NetSuite to the WMS to initiate picking, and 'Inventory Adjustment' records are pulled from the WMS to reflect cycle counts and damage reports. The endpoint is /services/rest/record/v1/inventoryadjustment. The current rate limiting is set at 20 requests per minute to avoid performance degradation during peak business hours (9 AM - 11 AM local time). Developers should use the dedicated Integration Role (ID 808) with a specific token for authentication.
-* Integration Owner: Mark Olsen
-* Contact: mark.olsen@ourcompany.com or Extension 501.
+NetSuite to WMS Integration. This integration supports warehouse operations by exchanging inventory movement data between NetSuite and the WMS. NetSuite sends sales order and purchase order details to the WMS. The WMS sends pick confirmations, pack data, shipping labels, real-time inventory adjustments, and cycle count results back to NetSuite. Stock transfers and warehouse-wide adjustments originate in the WMS and sync to NetSuite. Responsible team members: Integration Owner is Supply Chain Systems, Technical Lead is Olivia Martinez andSupport Contact is warehouse-integrations@example.com.
 
-Title: Custom Payment Gateway Integration
-We have implemented a custom payment processing solution through a **Suitelet** that bypasses the standard NetSuite payment module. This Suitelet, deployed at /app/site/hosting/scriptlet.nl?script=201&deploy=1, handles all credit card transactions for e-commerce orders. The key component is a **Client Script** attached to the Sales Order form that validates the card token before the record is saved. In the event of a validation error, the script displays the message "Payment Gateway: Token Invalid (Error Code PG401)" and prevents the Sales Order from transitioning to the 'Awaiting Fulfillment' status. This customization was last updated in Q2 2205 to comply with new PCI standards.
-* Integration Owner: David Kim
-* Contact: david.kim@ourcompany.com or Extension 335.
-
-### Document 2: NetSuite Customization and Governance
-
-Title: Standardized Record Naming Conventions
-All custom fields within our NetSuite environment must follow a strict naming convention to ensure clarity and maintainability. Custom fields must begin with a prefix identifying the record type, followed by an underscore, and then a clear descriptor.
-* Transaction Body Fields: custbody_
-* Entity Fields (Customer/Vendor): custentity_
-* Item Fields: custitem_
-For example, the custom field tracking the sales commission percentage on a Sales Order is named custbody_sales_comm_pct. Developers are required to use this standard for all new deployments via **SuiteCloud Development Framework (SDF)**.
-* Governance Owner: ERP Architecture Team
-* Contact: governance@ourcompany.com (Shared Mailbox).
-
-Title: Custom Record for Project Tracking
-We utilize a custom record type, **customrecord_project_tasks**, to track internal R&D efforts. This record is linked to the standard NetSuite Project record via a custom 'parent link' field (custrecord_pt_parent_project). This is critical because the standard Project Task functionality does not support the necessary resource allocation fields required by the R&D team. A **Map/Reduce Script** (ID 505) runs nightly to summarize the hours logged against this custom record and update the 'Total R&D Hours' field on the parent Project record. This script is scheduled via the Script Deployment record with ID 77.
-* Customization Owner: Alex Rodriguez
-* Contact: alex.rodriguez@ourcompany.com or Extension 710.
-
-Title: Governance and Script Versioning Policy
-All **SuiteScripts** (User Event, Client, or Scheduled) must be deployed with the minimum required user permissions. Scripts are versioned using a sequential naming convention (e.g., UE_SalesOrder_v1.0.js, UE_SalesOrder_v1.1.js). Before deploying a new script version, the developer must obtain approval from the ERP Governance Team via the Jira ticket system (Project Key: **NSDEV**). The NetSuite Release Documentation folder in the file cabinet contains the deployment logs for the last two quarters. Any script failing to adhere to this policy will be disabled immediately upon discovery.
-* Policy Enforcer: ERP Governance Team
-* Contact: governance@ourcompany.com (Shared Mailbox).
-
-### Document 3: Reporting and Advanced Search Logic
-
-Title: Financial Reporting Dashboard Portlet
-The Executive Dashboard includes a custom portlet powered by a **SuiteQL** query. This query retrieves the 'Bookings' amount from Sales Orders where the 'Expected Ship Date' is within the current fiscal quarter. The underlying query joins the Transaction table and the TransactionLine table, filtering specifically for recordtype='salesorder' and excluding transactions with status='Cancelled'. The query is executed every time the dashboard is loaded, which has been optimized to execute in under 2 seconds. The final result set is cached for 5 minutes.
-* Report Owner: Lisa Tran (Financial Planning & Analysis)
-* Contact: lisa.tran@ourcompany.com or Extension 225.
-
-Title: Complex Saved Search Logic for Inventory
-A key inventory tracking search is named **'Overstocked Items for Review (ID 330)'**. The search criteria utilize a complex formula: CASE WHEN {quantityonhand} > {custitem_safety_stock_level} * 1.5 THEN 1 ELSE 0 END. This formula identifies any item where the current quantity on hand is more than 150% of the custom 'Safety Stock Level' field. This search is essential for the procurement team and is run every Monday morning. The results are exported to a CSV file automatically using a scheduled **SuiteScript 2.1**.
-* Search/Script Owner: Javier Perez (Supply Chain Lead)
-* Contact: javier.perez@ourcompany.com or Extension 603.
+NetSuite to Bank of the World Integration. This integration handles banking transaction imports and reconciliation. Bank of the World sends daily transaction feeds, ACH payment confirmations, wire transfer records, and bank statement data to NetSuite. NetSuite sends vendor payment requests, remittance details, and account validation information to the bank. Treasury uses automated reconciliation workflows in NetSuite to match records. Responsible team members: Integration Owner is Treasury Team, Technical Lead is Ahmed Patel and Support Contact ia treasury-systems@example.com.
